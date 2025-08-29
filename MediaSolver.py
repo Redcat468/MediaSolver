@@ -359,21 +359,80 @@ def run_pipeline(
             delete_render_job(project, job_id)
             raise RuntimeError("Impossible de démarrer le rendu.")
 
+    def _parse_progress_dict(st: dict) -> int:
+        """
+        Tente d'extraire un pourcentage robuste depuis divers champs possibles.
+        Retourne un int 0..100.
+        """
+        if not isinstance(st, dict):
+            return 0
+        cand = None
+        for key in ("Progress", "JobPercentage", "CompletionPercentage", "PercentComplete"):
+            v = st.get(key)
+            if v is None:
+                continue
+            # ex: "37%", "37.2", 37, 37.0
+            if isinstance(v, str):
+                v = v.strip()
+                if v.endswith("%"):
+                    v = v[:-1]
+                try:
+                    v = float(v)
+                except Exception:
+                    continue
+            if isinstance(v, (int, float)):
+                cand = max(0, min(100, int(round(v))))
+                break
+        return cand if cand is not None else 0
+
+    def _is_terminal_status(st: dict) -> bool:
+        """
+        Détecte les états terminaux suivant les variantes : 'Complete', 'Completed', 'Success', 'Finished', etc.
+        """
+        s1 = (st.get("Status") or st.get("State") or st.get("JobStatus") or "").lower()
+        if any(k in s1 for k in ("complete", "success", "finished", "done")):
+            return True
+        # Certains builds n'ont pas de libellé, mais 'Error' = ""/0 en succès
+        err = st.get("Error")
+        if err in (None, "", 0, "0"):
+            # si Progress==100 on peut considérer fini
+            if _parse_progress_dict(st) == 100:
+                return True
+        return False
+
     print("[INFO] Rendu démarré. Progression :")
-    last = -1
-    while is_rendering(project):
+    last_print = -1
+    st = get_job_status(project, job_id) or {}
+    while True:
         st = get_job_status(project, job_id) or {}
-        prog = st.get("Progress", 0)
-        if isinstance(prog, str) and prog.endswith("%"):
-            try:
-                prog = int(prog[:-1])
-            except Exception:
-                prog = 0
-        ip = int(prog) if isinstance(prog, (int, float)) else 0
-        if ip != last:
-            print(f"  {ip}%")
-            last = ip
+        prog = _parse_progress_dict(st)
+
+        # Informations complémentaires quand dispo (ne bloque pas si absentes)
+        eta = st.get("TimeRemaining") or st.get("EstimatedTimeRemaining")
+        fps_live = st.get("RenderFPS") or st.get("CurrentFPS")
+        cur_file = st.get("CurrentClip") or st.get("ClipName")
+
+        # Impression throttlée (évite le spam)
+        if prog != last_print:
+            line = f"  {prog}%"
+            if eta:
+                line += f"  | ETA: {eta}"
+            if fps_live:
+                line += f"  | {fps_live} fps"
+            if cur_file:
+                # tronque si trop long
+                name = (cur_file[:40] + "…") if len(str(cur_file)) > 41 else cur_file
+                line += f"  | {name}"
+            print(line)
+            last_print = prog
+
+        if _is_terminal_status(st):
+            break
+
+        # fallback de sécurité : si l’API de statut ne bouge pas, on ne s’arrête que quand la queue dit terminé
+        # (sur certains builds IsRenderingInProgress() reste peu fiable, mais on peut l’utiliser en plus)
         time.sleep(0.5)
+
 
     st = get_job_status(project, job_id) or {}
     state = (st.get("Status") or st.get("State") or "").lower()
