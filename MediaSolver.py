@@ -1,16 +1,3 @@
-# auto_ingest_render.py — Ingest .mp4 -> Bin daté -> Timeline -> Render (preset)
-# Usage minimal :
-#   py.exe auto_ingest_render.py --src "D:\RUSHES\DAY01" --preset "PYTHON_TEST"
-#
-# Options utiles :
-#   --recursive
-#   --bin-parent "INGEST"        # Master/INGEST/<horodatage>
-#   --bin-prefix "INGEST_"       # par défaut: "INGEST_"
-#   --tl-prefix  "TL_"           # si omis, timeline = nom du bin
-#   --allow-stills               # inclure les images fixes
-#   --fps 25 --width 1920 --height 1080
-#   --outdir "D:\Renders" --name "EP01_V1" --unique --single
-#   --format mp4 --codec "H.264"
 from pathlib import Path
 import sys
 import time
