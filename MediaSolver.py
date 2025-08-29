@@ -1,9 +1,56 @@
+# --- Bootstrap Resolve API (Windows robust) ---
+import os, sys
+from pathlib import Path
+
+def _bootstrap_resolve_api():
+    # 1) Emplacement du module Python
+    modules_dir = Path(r"C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\Developer\Scripting\Modules")
+    if modules_dir.exists():
+        if str(modules_dir) not in sys.path:
+            sys.path.append(str(modules_dir))
+
+    # 2) Emplacement de fusionscript.dll (via ENV ou valeur par défaut)
+    dll_path = None
+    env_dll = os.environ.get("RESOLVE_SCRIPT_API", "")
+    if env_dll:
+        p = Path(env_dll)
+        if p.exists():
+            dll_path = p
+
+    if dll_path is None:
+        cand = Path(r"C:\Program Files\Blackmagic Design\DaVinci Resolve\fusionscript.dll")
+        if cand.exists():
+            dll_path = cand
+
+    if dll_path:
+        # Enregistre le chemin pour pybmd/DaVinciResolveScript
+        os.environ.setdefault("RESOLVE_SCRIPT_API", str(dll_path))
+
+        # 3) Autoriser le dossier bin pour la résolution des dépendances
+        bin_dir = dll_path.parent  # généralement ...\DaVinci Resolve\
+        try:
+            # Python 3.8+ : requis pour charger des DLL hors des "Known DLL directories"
+            os.add_dll_directory(str(bin_dir))
+        except Exception:
+            pass
+
+        # Ajoute aussi au PATH (utile pour des dépendances chargées plus tard)
+        if str(bin_dir) not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
+
+_bootstrap_resolve_api()
+# --- fin bootstrap ---
+
+
+
 from pathlib import Path
 import sys
 import time
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from pybmd import Resolve
+
+
 
 # ---------------- Utils communs ----------------
 def now_tag() -> str:
