@@ -25,6 +25,28 @@ def get_project(resolve):
 def ensure_dir(path: str):
     Path(path).mkdir(parents=True, exist_ok=True)
 
+def clip_source_name(clip) -> str:
+    """Retourne le nom de fichier source (ou clip name fallback)."""
+    props = {}
+    for attr in ("GetClipProperty", "get_clip_property"):
+        if hasattr(clip, attr):
+            try:
+                props = getattr(clip, attr)() or {}
+            except Exception:
+                pass
+            break
+    # Selon version: "File Path", "Filename", etc.
+    if "File Path" in props and props["File Path"]:
+        return Path(props["File Path"]).name
+    if "Filename" in props and props["Filename"]:
+        return props["Filename"]
+    # fallback: nom du clip Resolve
+    try:
+        return clip.get_name()
+    except Exception:
+        return getattr(clip, "GetName", lambda: "UNKNOWN")()
+
+
 # ---------------- Media Pool ----------------
 def find_or_create_bin_path(media_pool, path_parts: List[str]):
     """Crée/retourne Master/path_parts[0]/... et le sélectionne."""
@@ -266,6 +288,13 @@ def run_pipeline(
     clips = filter_video_audio(clips, allow_stills=allow_stills)
     if not clips:
         raise RuntimeError("Aucun clip utilisable pour la timeline.")
+
+    # ✅ Tri alphabétique par nom de fichier
+    clips.sort(key=lambda c: clip_source_name(c).lower())
+    print("[INFO] Clips triés :")
+    for c in clips:
+        print("  -", clip_source_name(c))
+
     maybe_set_first_timeline_settings(project, fps, width, height)
 
     tl_name = f"{(tl_prefix or '')}{bin_name}" if tl_prefix is not None else bin_name
