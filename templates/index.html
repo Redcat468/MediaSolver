@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>MediaSolver</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="{{ url_for('static', filename='images/logo.svg') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body>
+  <!-- Header -->
+  <header class="topbar" style="width:100%; display:flex; justify-content:center; margin-top:20px;">
+    <img src="{{ url_for('static', filename='images/banner.png') }}" alt="bannière" style="width:30%; height:auto;">
+  </header>
+
+  <!-- Main card -->
+  <main class="container">
+    <div class="card">
+        <h1 id="title" class="app-title">
+            Host : <span id="host-name">…</span>
+            <span id="resolve-dot" class="dot red" aria-label="Resolve OFF"></span>
+            <span id="resolve-text">Resolve OFF</span>
+          </h1>
+      <div class="form-row row-with-button">
+        <label for="src">Dossier source</label>
+        <div class="input-with-btn">
+          <input id="src" type="text" placeholder="Ex: D:\RUSHES\DAY01" required>
+          <button id="pick-src" type="button" class="btn ghost">Parcourir…</button>
+        </div>
+      </div>
+      
+      <div class="form-row row-with-button">
+        <label for="outdir">Dossier de sortie</label>
+        <div class="input-with-btn">
+          <input id="outdir" type="text" placeholder="Ex: D:\Renders" required>
+          <button id="pick-out" type="button" class="btn ghost">Parcourir…</button>
+        </div>
+      </div>
+      
+
+        <div class="form-row">
+          <label for="preset">Preset d'encodage</label>
+          <select id="preset" required>
+            {% if presets %}
+              {% for p in presets %}
+                <option value="{{ p }}">{{ p }}</option>
+              {% endfor %}
+            {% else %}
+              <option value="" disabled selected>Chargement des presets…</option>
+            {% endif %}
+          </select>
+        </div>
+
+        <div class="form-row inline">
+          <label class="checkbox">
+            <input id="recursive" type="checkbox">
+            <span>Parcourir les sous-dossiers</span>
+          </label>
+        </div>
+
+        <div class="actions">
+          <button id="start-btn" class="btn primary">Start Job</button>
+        </div>
+      </form>
+
+    <!-- Progress -->
+    <div id="job-status" class="job-status">—</div>
+    <div id="progress-wrap" class="progress hidden">
+        <div class="bar">
+          <div id="bar" class="bar-fill" style="width:0%">0%</div>
+        </div>
+      </div>
+      
+    
+  <!-- Footer licence -->
+  <footer class="footer">
+    <p xmlns:cc="http://creativecommons.org/ns#" xmlns:dct="http://purl.org/dc/terms/">
+        <a property="dct:title" rel="cc:attributionURL" href="https://github.com/Redcat468/MediaSolver">MediaSolver v1.0</a>
+        by
+        <a rel="cc:attributionURL dct:creator" property="cc:attributionName" href="https://github.com/Redcat468">
+        Félix Abt – Cairn Studios
+        </a>
+        is licensed under
+        <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" target="_blank" rel="license noopener noreferrer">CC BY-NC-SA 4.0</a>
+    </p>
+    </footer>
+  
+</body>
+
+
+<script>
+    /* ====== utils ====== */
+    function pad2(n){ n = Math.floor(Math.max(0, Number(n)||0)); return n<10?("0"+n):(""+n); }
+    function toHHMMSS(s){
+      if (s==null || s==='–') return '00:00:00';
+      if (typeof s==='string' && s.includes(':')) {
+        const p=s.split(':').map(x=>x.trim());
+        if (p.length===2){ const m=+p[0]||0, sec=+p[1]||0; return `00:${pad2(m)}:${pad2(sec)}`; }
+        if (p.length===3){ const h=+p[0]||0, m=+p[1]||0, sec=+p[2]||0; return `${pad2(h)}:${pad2(m)}:${pad2(sec)}`; }
+        return s;
+      }
+      const t=+s||0, h=Math.floor(t/3600), m=Math.floor((t%3600)/60), sec=Math.floor(t%60);
+      return `${pad2(h)}:${pad2(m)}:${pad2(sec)}`;
+    }
+    function classifyStatus(state, raw){
+      const s=(raw||state||'').toString().toLowerCase();
+      if (state==='done' || /complete|success|finished/.test(s)) return 'ok';
+      if (state==='error' || /cancel|fail|error/.test(s))        return 'bad';
+      return 'warn';
+    }
+  
+    /* ====== sélecteurs de dossiers ====== */
+    async function pickFolder(which){
+      try{
+        const r = await fetch(`/pick-folder/${which}`, {method:'POST', cache:'no-store'});
+        const d = await r.json();
+        if (d.ok && d.path){
+          if (which==='src')  document.getElementById('src').value = d.path;
+          if (which==='out')  document.getElementById('outdir').value = d.path;
+        } else if (d.error && d.error!=='Sélection annulée.') {
+          alert('Erreur sélecteur : '+d.error);
+        }
+      }catch(e){ alert('Erreur sélecteur : '+e); }
+    }
+  
+    /* ====== rendu/progression ====== */
+    let POLL = null;
+  
+    function applyProgress(d){
+      const wrap = document.getElementById('progress-wrap');
+      const bar  = document.getElementById('bar');
+      const statEl = document.getElementById('job-status');
+      const startBtn = document.getElementById('start-btn');
+  
+      const pct = Math.max(0, Math.min(100, parseInt(d.percent||0,10)));
+      const eta = toHHMMSS(d.eta || '00:00:00');
+      const raw = (d.job_status || d.state || '').toString();
+      const cls = classifyStatus(d.state, raw);
+  
+      // montrer la zone
+      wrap.classList.remove('hidden');
+  
+      // statut au-dessus
+      if (statEl){
+        statEl.textContent = raw || (d.state==='rendering' ? 'Rendering' : d.state || '—');
+        statEl.classList.remove('ok','bad','warn');
+        statEl.classList.add(cls);
+      }
+  
+      // barre + couleurs
+      bar.style.width = pct + '%';
+      bar.textContent = `${pct}% • ${eta}`;
+      bar.classList.remove('success','error');
+      if (cls==='ok')  bar.classList.add('success');
+      if (cls==='bad') bar.classList.add('error');
+  
+      // bouton
+      if (cls==='warn') {
+        startBtn.disabled = true;
+      } else {
+        // done ou error => relançable
+        startBtn.disabled = false;
+      }
+    }
+  
+    async function fetchProgressOnce(){
+      const r = await fetch('/progress', {cache:'no-store'});
+      return r.json();
+    }
+  
+    async function updateProgress(){
+      try{
+        const d = await fetchProgressOnce();
+        applyProgress(d);
+  
+        // si terminé / erreur => stop polling
+        const s = classifyStatus(d.state, d.job_status);
+        if (s!=='warn' && POLL){ clearInterval(POLL); POLL=null; }
+      }catch(e){ console.warn('updateProgress error:', e); }
+    }
+  
+    async function initProgressFromServer(){
+      try{
+        const d = await fetchProgressOnce();
+  
+        // si pas de job du tout, on masque la zone et on sort
+        if (!d.state || d.state==='idle'){
+          document.getElementById('progress-wrap').classList.add('hidden');
+          document.getElementById('start-btn').disabled = false;
+          return;
+        }
+  
+        // afficher l'état courant et (si en cours) relancer le polling
+        applyProgress(d);
+        if (classifyStatus(d.state, d.job_status)==='warn'){
+          if (POLL) clearInterval(POLL);
+          POLL = setInterval(updateProgress, 5000);
+          updateProgress();
+        }
+      }catch(e){
+        // en cas d'erreur, on autorise le start
+        document.getElementById('start-btn').disabled = false;
+      }
+    }
+  
+    /* ====== presets + start ====== */
+    document.addEventListener('DOMContentLoaded', async () => {
+      const presetSel = document.getElementById('preset');
+      const startBtn  = document.getElementById('start-btn');
+  
+      // Charger les presets si non fournis côté serveur
+      if (!presetSel.value || presetSel.options.length===0 || (presetSel.options[0] && presetSel.options[0].disabled)){
+        try{
+          const r = await fetch('/presets', {cache:'no-store'});
+          const d = await r.json();
+          if (d.ok && d.presets && d.presets.length){
+            presetSel.innerHTML='';
+            d.presets.forEach(p=>{
+              const opt=document.createElement('option');
+              opt.value=p; opt.textContent=p;
+              presetSel.appendChild(opt);
+            });
+          } else {
+            presetSel.innerHTML='<option disabled>Impossible de charger les presets</option>';
+          }
+        }catch{
+          presetSel.innerHTML='<option disabled>Erreur de chargement</option>';
+        }
+      }
+  
+      // Boutons "Parcourir…"
+      document.getElementById('pick-src').addEventListener('click', ()=>pickFolder('src'));
+      document.getElementById('pick-out').addEventListener('click', ()=>pickFolder('out'));
+  
+      // Démarrer le job
+      startBtn.addEventListener('click', async ()=>{
+        const src       = document.getElementById('src').value.trim();
+        const outdir    = document.getElementById('outdir').value.trim();
+        const preset    = presetSel.value.trim();
+        const recursive = document.getElementById('recursive').checked;
+  
+        if(!src || !outdir || !preset){
+          alert('Merci de remplir tous les champs.');
+          return;
+        }
+  
+        startBtn.disabled = true;
+        document.getElementById('progress-wrap').classList.remove('hidden');
+  
+        try{
+          const r = await fetch('/start', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({src,outdir,preset,recursive}),
+            cache:'no-store'
+          });
+          const d = await r.json();
+          if(!d.ok){
+            alert(d.error || 'Erreur au démarrage du job.');
+            startBtn.disabled=false;
+            return;
+          }
+        }catch(e){
+          alert('Erreur réseau : '+e);
+          startBtn.disabled=false;
+          return;
+        }
+  
+        if (POLL) clearInterval(POLL);
+        updateProgress();                 // tick immédiat
+        POLL = setInterval(updateProgress, 5000);
+      });
+  
+      // 🔁 reprise après reload
+      initProgressFromServer();
+    });
+  </script>
+    <script>
+        async function refreshHostTitle(){
+        try{
+            const r = await fetch('/hoststatus', {cache:'no-store'});
+            const d = await r.json();
+            if(!d || d.ok !== true) return;
+        
+            const hostEl = document.getElementById('host-name');
+            const dotEl  = document.getElementById('resolve-dot');
+            const txtEl  = document.getElementById('resolve-text');
+        
+            if (hostEl) hostEl.textContent = d.hostname || 'Unknown Host';
+            if (dotEl && txtEl){
+            dotEl.classList.remove('green','red');
+            if (d.resolve_running){
+                dotEl.classList.add('green');
+                txtEl.textContent = 'Resolve ON';
+                dotEl.setAttribute('aria-label','Resolve ON');
+            } else {
+                dotEl.classList.add('red');
+                txtEl.textContent = 'Resolve OFF';
+                dotEl.setAttribute('aria-label','Resolve OFF');
+            }
+            }
+        }catch(e){
+            // silencieux
+        }
+        }
+        
+        // Au chargement + rafraîchissement toutes les 10 s
+        document.addEventListener('DOMContentLoaded', ()=>{
+        refreshHostTitle();
+        setInterval(refreshHostTitle, 10000);
+        });
+        </script>
+  
+
+</html>

@@ -1,0 +1,123 @@
+:root{
+    --bg:#0e1116; --card:#151a21; --muted:#8b97a7; --text:#e9eef5; --accent:#4f8cff; --accent-2:#62d2a2;
+    --bar-bg:#263042; --bar-fill:#4f8cff;
+  }
+  *{box-sizing:border-box}
+  
+  /* ----- Layout global (sticky footer via flex) ----- */
+  html, body { height:100%; margin:0; }
+  body{
+    min-height:100vh;
+    display:flex;                 /* header -> main -> footer */
+    flex-direction:column;
+    background:var(--bg);
+    color:var(--text);
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  }
+  
+  /* Header */
+  .topbar{
+    position:sticky; top:0; width:100%;
+    background:#0e1116; border-bottom:1px solid #0e1116;
+    backdrop-filter: blur(6px);
+  }
+  .topbar .brand{max-width:1100px;margin:0 auto;display:flex;align-items:center;gap:12px;padding:12px 16px}
+  .topbar img{width:28px;height:28px}
+  .topbar .title{font-weight:700;letter-spacing:.2px}
+  
+  /* Contenu principal (prend l'espace restant) */
+  .container{
+    flex:1 0 auto;                /* pousse le footer en bas */
+    max-width:1100px; width:100%;
+    margin:24px auto; padding:0 16px;
+  }
+  
+  /* Carte */
+  .card{
+    background:var(--card);
+    border:1px solid #1b2330;
+    border-radius:16px;
+    padding:24px;
+    box-shadow:0 10px 30px rgba(0,0,0,.25);
+    margin-bottom:24px;           /* espace avant le footer */
+  }
+  
+  h1{margin:0 0 8px 0;font-size:1.4rem}
+  .subtitle{margin:0 0 20px 0;color:var(--muted)}
+  
+  .form-row{display:flex;flex-direction:column;margin-bottom:14px}
+  .form-row label{font-size:.9rem;margin-bottom:6px;color:var(--muted)}
+  .form-row input[type=text], .form-row select{
+    background:#0f141b;border:1px solid #212b3a;color:var(--text);padding:12px;border-radius:12px;outline:none
+  }
+  .form-row input[type=text]:focus, .form-row select:focus{border-color:var(--accent)}
+  .form-row.inline{flex-direction:row;align-items:center;gap:12px}
+  .checkbox{display:flex;align-items:center;gap:10px;color:var(--muted)}
+  
+  .actions{margin-top:10px}
+  .btn{
+    appearance:none;border:0;border-radius:12px;padding:12px 16px;font-weight:600;
+    background:linear-gradient(135deg,var(--accent),#7aa8ff);color:#fff;cursor:pointer;
+    box-shadow:0 6px 14px rgba(79,140,255,.25);transition:.2s transform ease,.2s box-shadow
+  }
+  .btn:hover{transform:translateY(-1px);box-shadow:0 10px 24px rgba(79,140,255,.35)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  
+  .input-with-btn{display:flex; gap:10px; align-items:center}
+  .input-with-btn input{flex:1}
+  .btn.ghost{background:#1a2330;color:#cfe0ff;box-shadow:none;border:1px solid #2a3648}
+  .btn.ghost:hover{transform:none;box-shadow:0 2px 10px rgba(0,0,0,.25)}
+  .row-with-button{margin-bottom:14px}
+  
+  .progress{margin-top:18px}
+  .progress .bar{width:100%;background:var(--bar-bg);border-radius:14px;overflow:hidden;height:26px;border:1px solid #2a3648}
+  .progress .bar-fill{height:100%;background:linear-gradient(90deg,var(--bar-fill),#7aa8ff);text-align:center;line-height:26px;font-size:.85rem}
+  
+  .stats.two{
+    display:grid;
+    grid-template-columns: repeat(2, minmax(140px,1fr));
+    gap:8px;
+    margin-top:10px;
+    color:var(--muted);
+  }
+  
+  .hidden{display:none}
+  
+  @media (max-width:600px){
+    .card{padding:16px}
+  }
+  
+  /* ----- Footer collé en bas, HORS de la carte ----- */
+  /* IMPORTANT : Aucune position sticky/fixed ici */
+  .footer{
+    margin-top:auto;              /* colle en bas si peu de contenu */
+    flex-shrink:0;
+    width:100%;
+    background:transparent;
+    color:#ecf0f1;
+    text-align:center;
+    padding:14px 10px;
+    font-size:.9rem;
+    border-top:2px solid rgba(255,255,255,0);
+  }
+  .footer a{color:#fff;text-decoration:none;border-bottom:1px solid transparent}
+  .footer a:hover{border-bottom-color:#fff}
+  
+  /* ⚠️ Assure-toi d'avoir supprimé toute ancienne règle :
+     .footer { position: sticky; bottom: 0; }  (à NE PAS garder)
+     .footer { position: fixed; bottom: 0; }   (à NE PAS garder)
+  */
+  
+.job-status{ text-align:center; margin-bottom:8px; color:var(--muted); }
+
+.dot{ display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; vertical-align:middle; }
+.dot.green{ background:#2ecc71; box-shadow:0 0 8px rgba(46,204,113,.6); }
+.dot.red{ background:#e74c3c; box-shadow:0 0 8px rgba(231,76,60,.6); }
+
+/* Couleurs de la barre selon l'état */
+.bar-fill.success{ background: linear-gradient(90deg, #25c46a, #7ae19f) !important; }
+.bar-fill.error{   background: linear-gradient(90deg, #e0524d, #ff8a80) !important; }
+.job-status{ text-align:center; margin:6px 0 10px; font-weight:600; color:var(--muted); }
+.job-status.ok{   color:#62d2a2; }  /* succès */
+.job-status.bad{  color:#ff6b6b; }  /* annulé/erreur */
+.job-status.warn{ color:#f1c40f; }  /* en cours / queued */
