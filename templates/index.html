@@ -16,11 +16,15 @@
   <!-- Main card -->
   <main class="container">
     <div class="card">
-        <h1 id="title" class="app-title">
-            Host : <span id="host-name">…</span>
-            <span id="resolve-dot" class="dot red" aria-label="Resolve OFF"></span>
-            <span id="resolve-text">Resolve OFF</span>
-          </h1>
+      <h1 id="title" class="app-title">
+        MediaSolver — <span id="host-name">…</span>
+        <span id="resolve-dot" class="dot red" aria-label="Resolve OFF"></span>
+        <span id="resolve-text">Resolve OFF</span>
+        <!-- ❗️plus de 'hidden' ici -->
+        <button id="btn-start-resolve" class="btn ghost small" type="button">Start Resolve</button>
+      </h1>
+      
+      
       <div class="form-row row-with-button">
         <label for="src">Dossier source</label>
         <div class="input-with-btn">
@@ -108,12 +112,23 @@
       if (state==='error' || /cancel|fail|error/.test(s))        return 'bad';
       return 'warn';
     }
-  
+
+    /* ====== fetch JSON avec timeout ====== */
+    async function fetchJson(url, options={}, timeoutMs=2000){
+      const ctrl = new AbortController();
+      const t = setTimeout(()=>ctrl.abort(), timeoutMs);
+      try{
+        const r = await fetch(url, {...options, signal: ctrl.signal, cache:'no-store'});
+        const j = await r.json();
+        clearTimeout(t);
+        return j;
+      }catch(e){ clearTimeout(t); throw e; }
+    }
+
     /* ====== sélecteurs de dossiers ====== */
     async function pickFolder(which){
       try{
-        const r = await fetch(`/pick-folder/${which}`, {method:'POST', cache:'no-store'});
-        const d = await r.json();
+        const d = await fetchJson(`/pick-folder/${which}`, {method:'POST'});
         if (d.ok && d.path){
           if (which==='src')  document.getElementById('src').value = d.path;
           if (which==='out')  document.getElementById('outdir').value = d.path;
@@ -122,38 +137,38 @@
         }
       }catch(e){ alert('Erreur sélecteur : '+e); }
     }
-  
+
     /* ====== rendu/progression ====== */
     let POLL = null;
-  
+
     function applyProgress(d){
       const wrap = document.getElementById('progress-wrap');
       const bar  = document.getElementById('bar');
       const statEl = document.getElementById('job-status');
       const startBtn = document.getElementById('start-btn');
-  
+
       const pct = Math.max(0, Math.min(100, parseInt(d.percent||0,10)));
       const eta = toHHMMSS(d.eta || '00:00:00');
       const raw = (d.job_status || d.state || '').toString();
       const cls = classifyStatus(d.state, raw);
-  
+
       // montrer la zone
       wrap.classList.remove('hidden');
-  
+
       // statut au-dessus
       if (statEl){
         statEl.textContent = raw || (d.state==='rendering' ? 'Rendering' : d.state || '—');
         statEl.classList.remove('ok','bad','warn');
         statEl.classList.add(cls);
       }
-  
+
       // barre + couleurs
       bar.style.width = pct + '%';
       bar.textContent = `${pct}% • ${eta}`;
       bar.classList.remove('success','error');
       if (cls==='ok')  bar.classList.add('success');
       if (cls==='bad') bar.classList.add('error');
-  
+
       // bouton
       if (cls==='warn') {
         startBtn.disabled = true;
@@ -162,34 +177,33 @@
         startBtn.disabled = false;
       }
     }
-  
+
     async function fetchProgressOnce(){
-      const r = await fetch('/progress', {cache:'no-store'});
-      return r.json();
+      return await fetchJson('/progress');
     }
-  
+
     async function updateProgress(){
       try{
         const d = await fetchProgressOnce();
         applyProgress(d);
-  
+
         // si terminé / erreur => stop polling
         const s = classifyStatus(d.state, d.job_status);
         if (s!=='warn' && POLL){ clearInterval(POLL); POLL=null; }
       }catch(e){ console.warn('updateProgress error:', e); }
     }
-  
+
     async function initProgressFromServer(){
       try{
         const d = await fetchProgressOnce();
-  
+
         // si pas de job du tout, on masque la zone et on sort
         if (!d.state || d.state==='idle'){
           document.getElementById('progress-wrap').classList.add('hidden');
           document.getElementById('start-btn').disabled = false;
           return;
         }
-  
+
         // afficher l'état courant et (si en cours) relancer le polling
         applyProgress(d);
         if (classifyStatus(d.state, d.job_status)==='warn'){
@@ -202,59 +216,64 @@
         document.getElementById('start-btn').disabled = false;
       }
     }
-  
+
     /* ====== presets + start ====== */
+    let PRESETS_LOADED = false;
+
+    async function loadPresets(){
+      try{
+        const sel = document.getElementById('preset');
+        const d = await fetchJson('/presets', {}, 3000);
+        if (d.ok && d.presets && d.presets.length){
+          sel.innerHTML = '';
+          d.presets.forEach(p=>{
+            const opt = document.createElement('option');
+            opt.value = p; opt.textContent = p;
+            sel.appendChild(opt);
+          });
+          PRESETS_LOADED = true;
+        }else{
+          // on garde le placeholder "Chargement des presets…" si OFF
+        }
+      }catch(e){
+        // silencieux
+      }
+    }
+
     document.addEventListener('DOMContentLoaded', async () => {
       const presetSel = document.getElementById('preset');
       const startBtn  = document.getElementById('start-btn');
-  
+
       // Charger les presets si non fournis côté serveur
       if (!presetSel.value || presetSel.options.length===0 || (presetSel.options[0] && presetSel.options[0].disabled)){
-        try{
-          const r = await fetch('/presets', {cache:'no-store'});
-          const d = await r.json();
-          if (d.ok && d.presets && d.presets.length){
-            presetSel.innerHTML='';
-            d.presets.forEach(p=>{
-              const opt=document.createElement('option');
-              opt.value=p; opt.textContent=p;
-              presetSel.appendChild(opt);
-            });
-          } else {
-            presetSel.innerHTML='<option disabled>Impossible de charger les presets</option>';
-          }
-        }catch{
-          presetSel.innerHTML='<option disabled>Erreur de chargement</option>';
-        }
+        await loadPresets();
       }
-  
+
       // Boutons "Parcourir…"
       document.getElementById('pick-src').addEventListener('click', ()=>pickFolder('src'));
       document.getElementById('pick-out').addEventListener('click', ()=>pickFolder('out'));
-  
+
       // Démarrer le job
       startBtn.addEventListener('click', async ()=>{
         const src       = document.getElementById('src').value.trim();
         const outdir    = document.getElementById('outdir').value.trim();
         const preset    = presetSel.value.trim();
         const recursive = document.getElementById('recursive').checked;
-  
+
         if(!src || !outdir || !preset){
           alert('Merci de remplir tous les champs.');
           return;
         }
-  
+
         startBtn.disabled = true;
         document.getElementById('progress-wrap').classList.remove('hidden');
-  
+
         try{
-          const r = await fetch('/start', {
+          const d = await fetchJson('/start', {
             method:'POST',
             headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({src,outdir,preset,recursive}),
-            cache:'no-store'
+            body:JSON.stringify({src,outdir,preset,recursive})
           });
-          const d = await r.json();
           if(!d.ok){
             alert(d.error || 'Erreur au démarrage du job.');
             startBtn.disabled=false;
@@ -265,51 +284,125 @@
           startBtn.disabled=false;
           return;
         }
-  
+
         if (POLL) clearInterval(POLL);
         updateProgress();                 // tick immédiat
         POLL = setInterval(updateProgress, 5000);
       });
-  
+
       // 🔁 reprise après reload
       initProgressFromServer();
     });
-  </script>
-    <script>
-        async function refreshHostTitle(){
+
+    async function refreshHostTitle(){
+      try{
+        const d = await fetchJson('/hoststatus', {}, 1500);
+        const hostEl = document.getElementById('host-name');
+        const dotEl  = document.getElementById('resolve-dot');
+        const txtEl  = document.getElementById('resolve-text');
+        const btn    = document.getElementById('btn-start-resolve');
+
+        if (d.ok && hostEl) hostEl.textContent = d.hostname || 'Unknown Host';
+
+        dotEl.classList.remove('green','red');
+        if (d.ok && d.resolve_running){
+          dotEl.classList.add('green');  txtEl.textContent='Resolve ON';
+          btn.classList.add('hidden');   // cache le bouton si ON
+          // charge les presets une seule fois quand Resolve est ON
+          if (!PRESETS_LOADED) { await loadPresets(); }
+        } else {
+          dotEl.classList.add('red');    txtEl.textContent='Resolve OFF';
+          btn.classList.remove('hidden'); // montre le bouton si OFF
+        }
+      }catch(e){
+        // si erreur réseau, laisser le bouton visible et ne rien bloquer
+        const btn = document.getElementById('btn-start-resolve');
+        btn.classList.remove('hidden');
+      }
+    }
+
+  // utilitaire
+  const sleep = (ms)=>new Promise(r=>setTimeout(r, ms));
+
+  async function startResolveAndOpenProject(){
+    const btn = document.getElementById('btn-start-resolve');
+    btn.disabled = true; btn.textContent = 'Starting…';
+    try{
+      // ⚠️ NE PAS utiliser fetchJson() (pas de timeout ici)
+      await fetch('/start-resolve', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ project: 'MediaSolver' }),
+        cache:'no-store'
+      }).catch(e=>{
+        // on ignore l’AbortError s’il se produit (certains navigateurs)
+        if (e && e.name !== 'AbortError') throw e;
+      });
+
+      // Poll /hoststatus jusqu’à ON (max ~90 s)
+      for (let i=0; i<45; i++){ // 45 * 2s = 90s
+        await sleep(2000);
         try{
-            const r = await fetch('/hoststatus', {cache:'no-store'});
-            const d = await r.json();
-            if(!d || d.ok !== true) return;
-        
+          const r = await fetch('/hoststatus', {cache:'no-store'});
+          const d = await r.json();
+          if (d && d.ok){
+            // maj H1
             const hostEl = document.getElementById('host-name');
             const dotEl  = document.getElementById('resolve-dot');
             const txtEl  = document.getElementById('resolve-text');
-        
+            const startB = document.getElementById('btn-start-resolve');
+
             if (hostEl) hostEl.textContent = d.hostname || 'Unknown Host';
             if (dotEl && txtEl){
-            dotEl.classList.remove('green','red');
-            if (d.resolve_running){
-                dotEl.classList.add('green');
-                txtEl.textContent = 'Resolve ON';
-                dotEl.setAttribute('aria-label','Resolve ON');
-            } else {
-                dotEl.classList.add('red');
-                txtEl.textContent = 'Resolve OFF';
-                dotEl.setAttribute('aria-label','Resolve OFF');
+              dotEl.classList.remove('green','red');
+              if (d.resolve_running){
+                dotEl.classList.add('green'); txtEl.textContent='Resolve ON';
+                if (startB) startB.classList.add('hidden');
+                // charge les presets une seule fois quand Resolve passe ON
+                if (typeof loadPresets === 'function') { await loadPresets(); }
+                break;
+              } else {
+                dotEl.classList.add('red');   txtEl.textContent='Resolve OFF';
+                if (startB) startB.classList.remove('hidden');
+              }
             }
-            }
-        }catch(e){
-            // silencieux
-        }
-        }
-        
-        // Au chargement + rafraîchissement toutes les 10 s
-        document.addEventListener('DOMContentLoaded', ()=>{
-        refreshHostTitle();
-        setInterval(refreshHostTitle, 10000);
-        });
-        </script>
-  
+          }
+        }catch(e){ /* silencieux, on continue à poller */ }
+      }
+    }catch(e){
+      // en cas d’erreur autre qu’AbortError
+      alert('Erreur: '+e);
+    }finally{
+      btn.disabled = false; btn.textContent = 'Start Resolve';
+    }
+  }
+
+  // Assure le binding
+  document.addEventListener('DOMContentLoaded', ()=>{
+    const btn = document.getElementById('btn-start-resolve');
+    if (btn && !btn.__bound){
+      btn.addEventListener('click', startResolveAndOpenProject);
+      btn.__bound = true;
+    }
+  });
+
+    document.addEventListener('DOMContentLoaded', async ()=>{
+      // montrer le bouton tout de suite, on le cache si ON après hoststatus
+      document.getElementById('btn-start-resolve').classList.remove('hidden');
+      document.getElementById('btn-start-resolve').addEventListener('click', startResolveAndOpenProject);
+
+      // d’abord H1 rapide, ensuite (éventuellement) presets
+      await refreshHostTitle();
+      setInterval(refreshHostTitle, 10000);
+
+      // Si Resolve est déjà ON au premier chargement, on charge les presets (sinon on attend ON)
+      if (!PRESETS_LOADED){
+        try{
+          const d = await fetchJson('/hoststatus', {}, 1500);
+          if (d.ok && d.resolve_running) { await loadPresets(); }
+        }catch(e){}
+      }
+    });
+</script>
 
 </html>

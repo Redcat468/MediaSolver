@@ -1,15 +1,24 @@
 # app.py — MediaSolver Web UI (Flask)
 
 import os, sys, threading, time
+import threading
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from flask import Flask, render_template, request, jsonify
+import os, time, socket, platform, subprocess, sys
+from pathlib import Path
 import os, socket
 try:
     import psutil
 except Exception:
     psutil = None
+try:
+    import winreg
+except Exception:
+    winreg = None
+
+from flask import jsonify, request, make_response
 
 # ---------- Bootstrap Resolve API (crucial en exe/venv/onefile) ----------
 def _add_dll_dir(p: Optional[Path]):
@@ -46,6 +55,39 @@ def _bootstrap_resolve_api():
         sys.path.append(str(modules_dir))
 
 _bootstrap_resolve_api()
+
+
+def _bootstrap_resolve_worker(project_name: str):
+    try:
+        # 1) si Resolve déjà ON, tenter d'ouvrir/créer le projet
+        if is_resolve_running():
+            try:
+                r = Resolve()
+                pm = r.get_project_manager()
+                if not pm:
+                    r, pm = wait_api_ready(timeout=10.0, interval=1.0)
+                if pm:
+                    ensure_project_open(pm, project_name)
+                    return
+            except Exception:
+                pass
+
+        # 2) OFF → lancer
+        exe = find_resolve_exe()
+        if not exe:
+            return
+        cwd = str(Path(exe).parent)
+        subprocess.Popen([exe], cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        # 3) attendre l’API puis ouvrir/créer le projet
+        r, pm = wait_api_ready(timeout=120.0, interval=1.5)
+        if pm:
+            ensure_project_open(pm, project_name)
+    except Exception:
+        pass
+
+
+
 
 # ---------- Imports Resolve (après bootstrap) ----------
 from pybmd import Resolve  # noqa: E402
@@ -85,6 +127,145 @@ def pick_folder_dialog(initial_dir: Optional[str] = None) -> str:
 
 
 # ---------- Helpers Resolve ----------
+
+
+def _file_exists(p: str) -> bool:
+    try:
+        return Path(p).is_file()
+    except Exception:
+        return False
+
+def find_resolve_exe() -> str | None:
+    """
+    Tente de localiser Resolve.exe :
+    - variable d'env RESOLVE_EXE
+    - chemin standard Program Files
+    - Registre Windows (InstallDir)
+    - scan léger dans Program Files\Blackmagic Design\
+    """
+    # 1) env
+    envp = os.environ.get("RESOLVE_EXE")
+    if envp and _file_exists(envp):
+        return envp
+
+    # 2) standard
+    pf = os.environ.get("ProgramFiles", r"C:\Program Files")
+    std = os.path.join(pf, r"Blackmagic Design\DaVinci Resolve\Resolve.exe")
+    if _file_exists(std):
+        return std
+
+    # 3) registre
+    if winreg is not None:
+        for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+            for keypath in (
+                r"SOFTWARE\Blackmagic Design\DaVinci Resolve",
+                r"SOFTWARE\WOW6432Node\Blackmagic Design\DaVinci Resolve",
+            ):
+                try:
+                    with winreg.OpenKey(hive, keypath) as k:
+                        for valname in ("InstallDir", "InstallFolder", "InstallPath"):
+                            try:
+                                v, _ = winreg.QueryValueEx(k, valname)
+                                if v:
+                                    cand = os.path.join(v, "Resolve.exe")
+                                    if _file_exists(cand):
+                                        return cand
+                            except OSError:
+                                pass
+                except OSError:
+                    pass
+
+    # 4) scan rapide dans Blackmagic Design
+    root = os.path.join(pf, "Blackmagic Design")
+    try:
+        for sub in ("DaVinci Resolve", "DaVinci Resolve Studio"):
+            cand = os.path.join(root, sub, "Resolve.exe")
+            if _file_exists(cand):
+                return cand
+    except Exception:
+        pass
+    return None
+
+def is_resolve_running() -> bool:
+    # essai API (plus fiable)
+    try:
+        r = Resolve()
+        return bool(r.get_project_manager())
+    except Exception:
+        pass
+    # fallback process
+    if psutil is not None:
+        try:
+            for p in psutil.process_iter(["name"]):
+                name = (p.info.get("name") or "").lower()
+                if "resolve" in name:
+                    return True
+        except Exception:
+            pass
+    return False
+
+def wait_api_ready(timeout: float = 90.0, interval: float = 1.5):
+    """
+    Attend que l'API Resolve soit dispo et renvoie (Resolve, ProjectManager) ou (None, None).
+    """
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        try:
+            r = Resolve()
+            pm = r.get_project_manager()
+            if pm:
+                return r, pm
+        except Exception:
+            pass
+        time.sleep(interval)
+    return None, None
+
+def _pm_call(pm, name: str, *args, **kw):
+    """
+    Appelle une méthode du ProjectManager en gérant snake_case / CamelCase.
+    """
+    for attr in (name, "".join(part.capitalize() for part in name.split("_"))):
+        if hasattr(pm, attr):
+            return getattr(pm, attr)(*args, **kw)
+    raise AttributeError(f"ProjectManager has no method '{name}'/'{attr}'")
+
+def ensure_project_open(pm, project_name: str):
+    """
+    Charge ou crée le projet 'project_name'. Retourne True si OK.
+    """
+    # liste des projets
+    proj_list = []
+    try:
+        proj_list = _pm_call(pm, "get_project_list") or []
+    except Exception:
+        pass
+
+    if proj_list and project_name in proj_list:
+        ok = _pm_call(pm, "load_project", project_name)
+        return bool(ok)
+
+    # Essaie de charger quand même au cas où la liste est vide sur certaines builds
+    try:
+        ok = _pm_call(pm, "load_project", project_name)
+        if ok:
+            return True
+    except Exception:
+        pass
+
+    # sinon créer
+    created = None
+    try:
+        created = _pm_call(pm, "create_project", project_name)
+    except Exception:
+        # variantes API native
+        for alt in ("CreateProject",):
+            if hasattr(pm, alt):
+                created = getattr(pm, alt)(project_name)
+                break
+    return bool(created)
+
+
+
 def get_project(resolve=None):
     r = resolve or Resolve()
     pm = r.get_project_manager()
@@ -523,6 +704,27 @@ def index():
         presets = []
     return render_template("index.html", presets=presets)
 
+
+@app.route("/start-resolve", methods=["POST"])
+def start_resolve():
+    """
+    Démarre/attache Resolve en tâche de fond et ouvre/crée le projet 'MediaSolver'.
+    Répond immédiatement pour éviter les timeouts côté navigateur.
+    """
+    data = request.get_json(silent=True) or {}
+    project_name = data.get("project") or "MediaSolver"
+
+    # lance le bootstrap en arrière-plan, réponse immédiate
+    t = threading.Thread(target=_bootstrap_resolve_worker, args=(project_name,), daemon=True)
+    t.start()
+
+    resp = make_response(jsonify({"ok": True, "message": "Resolve starting in background"}))
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    return resp
+
+
+
 @app.route("/pick-folder/<which>", methods=["POST"])
 def api_pick_folder(which: str):
     """
@@ -542,10 +744,16 @@ def api_pick_folder(which: str):
 
 @app.route("/presets")
 def api_presets():
+    # si Resolve OFF -> répondre vite sans bloquer
+    if not is_resolve_running_fast():
+        return jsonify({"ok": False, "presets": [], "error": "Resolve OFF"}), 200
+    # sinon, votre logique actuelle list_presets() ici :
     try:
-        return jsonify({"ok": True, "presets": list_presets()})
+        presets = list_presets() or []
+        return jsonify({"ok": True, "presets": presets})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e), "presets": []}), 500
+        return jsonify({"ok": False, "presets": [], "error": str(e)}), 200
+
 
 @app.route("/start", methods=["POST"])
 def api_start():
@@ -593,47 +801,29 @@ def debug_jobstatus():
     return jsonify({"ok": True, "raw": st})
 
 
+def is_resolve_running_fast() -> bool:
+    """Check ultra-rapide basé sur la présence du process Resolve (pas d'attachement API)."""
+    if psutil is None:
+        return False
+    try:
+        for p in psutil.process_iter(["name"]):
+            name = (p.info.get("name") or "").lower()
+            if "resolve" in name:
+                return True
+    except Exception:
+        pass
+    return False
+
 @app.route("/hoststatus")
 def hoststatus():
-    """
-    Renvoie { ok, hostname, resolve_running } pour le H1.
-    - hostname : nom de la machine
-    - resolve_running : True si Resolve est détecté (attach pybmd en priorité, sinon process)
-    """
-    # Hostname robuste
-    hostname = (
-        socket.gethostname()
-        or platform.node()
-        or os.environ.get("COMPUTERNAME")
-        or "Unknown Host"
-    )
-
-    # Détection Resolve — priorité à l'attachement via pybmd (le plus fiable)
-    resolve_running = False
-    try:
-        r = Resolve()
-        pm = r.get_project_manager()
-        resolve_running = bool(pm)
-    except Exception:
-        resolve_running = False
-
-    # Fallback process si attach a échoué (ex: privilèges)
-    if not resolve_running and psutil is not None:
-        try:
-            for p in psutil.process_iter(["name"]):
-                name = (p.info.get("name") or "").lower()
-                # couvre: "resolve.exe", "davinci resolve.exe", "resolve"
-                if "resolve" in name:
-                    resolve_running = True
-                    break
-        except Exception:
-            pass
-
-    # Anti-cache
-    resp = make_response(jsonify({"ok": True, "hostname": hostname, "resolve_running": resolve_running}))
+    """Renvoie { ok, hostname, resolve_running } sans bloquer."""
+    hostname = socket.gethostname() or platform.node() or os.environ.get("COMPUTERNAME") or "Unknown Host"
+    running = is_resolve_running_fast()
+    resp = make_response(jsonify({"ok": True, "hostname": hostname, "resolve_running": running}))
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     resp.headers["Pragma"] = "no-cache"
     return resp
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    # ⚠️ pas de reloader ni debug en usage normal, sinon les requêtes se font couper
+    app.run(host="127.0.0.1", port=5000, debug=False, use_reloader=False, threaded=True)
