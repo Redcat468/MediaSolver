@@ -1,15 +1,24 @@
 # app.py — MediaSolver Web UI (Flask)
 
-import os, sys, threading, time
+import os, sys, threading, time, socket
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, List, Dict, Any
-from flask import Flask, render_template, request, jsonify
-import os, socket
-try:
-    import psutil
-except Exception:
-    psutil = None
+from typing import Optional, List
+import tkinter as tk
+from tkinter import filedialog
+
+from flask import Flask, render_template, request, jsonify, make_response
+from ensure_mediasolver_safe import ensure_mediasolver_ready
+
+if getattr(sys, "frozen", False):
+    base = sys._MEIPASS
+    app = Flask(__name__,
+                template_folder=os.path.join(base, "templates"),
+                static_folder=os.path.join(base, "static"))
+else:
+    app = Flask(__name__)
+
+
 
 # ---------- Bootstrap Resolve API (crucial en exe/venv/onefile) ----------
 def _add_dll_dir(p: Optional[Path]):
@@ -53,8 +62,6 @@ from pybmd import Resolve  # noqa: E402
 
 
 # --- Dialogues natifs de sélection de dossier (Windows/macOS/Linux) ---
-import tkinter as tk
-from tkinter import filedialog
 
 def pick_folder_dialog(initial_dir: Optional[str] = None) -> str:
     """
@@ -85,59 +92,6 @@ def pick_folder_dialog(initial_dir: Optional[str] = None) -> str:
 
 
 # ---------- Helpers Resolve ----------
-
-
-# --- Projet ouvert : retourne le nom du projet ou lève RuntimeError ---
-def get_open_project_name() -> str:
-    """
-    Retourne le nom du projet Resolve ouvert.
-    Lève RuntimeError si aucun projet n'est ouvert ou si l'API est indisponible.
-    """
-    from pybmd import Resolve
-
-    resolve = Resolve()
-    pm = resolve.get_project_manager()
-    if not pm:
-        raise RuntimeError("Resolve API indisponible.")
-    project = pm.get_current_project()
-    if not project:
-        raise RuntimeError("Aucun projet ouvert dans Resolve.")
-
-    try:
-        name = project.get_name()
-    except AttributeError:
-        name = project.GetName()
-
-    name = (name or "").strip()
-    if not name:
-        raise RuntimeError("Nom de projet introuvable.")
-    return name
-
-
-
-def _hostname():
-    return socket.gethostname() or platform.node() or os.environ.get("COMPUTERNAME") or "Unknown Host"
-
-def _safe_get_name(project):
-    """True si on peut vraiment lire un nom non vide depuis l'objet projet."""
-    if project is None:
-        return None
-    # wrapper
-    if hasattr(project, "get_name"):
-        try:
-            n = project.get_name() or ""
-            return n.strip() or None
-        except Exception:
-            pass
-    # natif
-    b = getattr(project, "_project", project)
-    if hasattr(b, "GetName"):
-        try:
-            n = b.GetName() or ""
-            return n.strip() or None
-        except Exception:
-            pass
-    return None
 
 def get_project(resolve=None):
     r = resolve or Resolve()
@@ -423,11 +377,11 @@ def run_pipeline_thread(src_folder: str, outdir: str, preset_name: str, recursiv
         r, project = get_project()
         media_pool = project.get_media_pool()
 
-        # --- 1) Lister MP4 ---
+        # --- 1) Lister fichiers videos ---
         src = Path(src_folder).expanduser().resolve()
-        mp4s = [str(p) for p in (src.rglob("*.mp4") if recursive else src.glob("*.mp4"))]
+        mp4s = [str(p) for p in (src.rglob("*.*") if recursive else src.glob("*.*"))]
         if not mp4s:
-            raise RuntimeError("Aucun .mp4 trouvé dans le dossier source.")
+            raise RuntimeError("Aucun fichiertrouvé dans le dossier source.")
         job_update(message=f"Import {len(mp4s)} fichiers…", percent=3)
 
         # --- 2) Bin daté ---
@@ -549,12 +503,6 @@ def run_pipeline_thread(src_folder: str, outdir: str, preset_name: str, recursiv
 
             time.sleep(0.5)
 
-        # nettoyage sans écraser l'état final
-        try:
-            delete_render_job(project, job_id)
-        except Exception:
-            pass
-
         # marquer la fin si pas déjà fait (ne PAS convertir un error en done)
         with JOB_LOCK:
             if JOB.get("state") not in ("error", "done"):
@@ -570,12 +518,15 @@ app = Flask(__name__)
 
 @app.route("/")
 def index():
-    # On essaie de charger la liste des presets pour pré-remplir (fallback côté client via /presets)
+    host = socket.gethostname() or os.environ.get("COMPUTERNAME") or "Unknown Host"
     try:
-        presets = list_presets()
+        ok, _, _ = ensure_mediasolver_ready(0.7, 0.7, 1)
+        presets = list_presets() if ok else []
     except Exception:
         presets = []
-    return render_template("index.html", presets=presets)
+    return render_template("index.html", presets=presets, hostname=host)
+
+
 
 @app.route("/pick-folder/<which>", methods=["POST"])
 def api_pick_folder(which: str):
@@ -596,10 +547,14 @@ def api_pick_folder(which: str):
 
 @app.route("/presets")
 def api_presets():
+    ok, status, details = ensure_mediasolver_ready(0.7, 0.7, 1)
+    if not ok:
+        return jsonify({"ok": False, "error": f"Resolve not ready: {status} - {details}", "presets": []}), 503
     try:
         return jsonify({"ok": True, "presets": list_presets()})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e), "presets": []}), 500
+
 
 @app.route("/start", methods=["POST"])
 def api_start():
@@ -612,6 +567,10 @@ def api_start():
     if not src or not outdir or not preset:
         return jsonify({"ok": False, "error": "Champs requis: dossier source, dossier de sortie, preset."}), 400
 
+    ok, status, details = ensure_mediasolver_ready(0.7, 0.7, 1)
+    if not ok:
+        return jsonify({"ok": False, "error": f"Resolve not ready: {status} - {details}"}), 503
+
     with JOB_LOCK:
         if JOB["state"] in ("preparing", "rendering"):
             return jsonify({"ok": False, "error": "Un job est déjà en cours."}), 409
@@ -621,7 +580,6 @@ def api_start():
     t.start()
     return jsonify({"ok": True})
 
-from flask import jsonify, make_response
 
 @app.route("/progress")
 def api_progress():
@@ -647,48 +605,53 @@ def debug_jobstatus():
     return jsonify({"ok": True, "raw": st})
 
 
-# app.py (imports en haut du fichier si pas déjà présents)
-import os, socket, platform, time
-try:
-    import psutil
-except Exception:
-    psutil = None
 
-from flask import jsonify, make_response
-from pybmd import Resolve
 
-# app.py
-import os, socket, platform, subprocess, sys
-from flask import jsonify, make_response
-from pybmd import Resolve
+@app.route("/prepare", methods=["POST"])
+def api_prepare():
+    """
+    Lance tel quel ensure_mediasolver_ready() du module externe.
+    Aucun autre gating: on renvoie strictement {ok, status, details}.
+    """
+    try:
+        ok, status, details = ensure_mediasolver_ready(init_timeout=0.7, op_timeout=0.7, retries=1)
+        return jsonify({"ok": bool(ok), "status": status, "details": details}), (200 if ok else 503)
+    except Exception as e:
+        return jsonify({"ok": False, "status": "ERROR", "details": str(e)}), 500
 
 
 @app.route("/hoststatus")
 def hoststatus():
-    """
-    Stratégie:
-      - Essaye de lire le nom du projet via get_open_project_name()
-      - Si erreur OU nom == 'Untitled Project' => resolve_running = False
-      - Sinon => resolve_running = True
-    """
     hostname = socket.gethostname() or os.environ.get("COMPUTERNAME") or "Unknown Host"
 
-    try:
-        proj_name = get_open_project_name()
-        resolve_running = proj_name.lower() != "untitled project"
-    except Exception:
-        proj_name = ""
-        resolve_running = False
+    ok, status, details = ensure_mediasolver_ready(init_timeout=0.7, op_timeout=0.7, retries=1)
+    project_name = ""
+    if ok:
+        try:
+            # on lit vraiment le nom pour l'afficher (devrait être "MediaSolver")
+            r = Resolve()
+            pm = r.get_project_manager()
+            proj = pm.get_current_project() if pm else None
+            if proj:
+                try:
+                    project_name = proj.get_name()
+                except AttributeError:
+                    project_name = proj.GetName()
+        except Exception:
+            project_name = TARGET_NAME
 
     resp = make_response(jsonify({
         "ok": True,
         "hostname": hostname,
-        "resolve_running": bool(resolve_running),
-        "project_name": proj_name,  # utile côté H1 si ON
+        "ready": bool(ok),          # <- clé simple côté front
+        "status": status,           # 'OK', 'APP_OFF', ...
+        "details": details,         # message utile debug
+        "project_name": project_name
     }))
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     resp.headers["Pragma"] = "no-cache"
     return resp
 
+
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=17209, debug=True)

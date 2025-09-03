@@ -1,0 +1,6 @@
+The program is installed, congratulations.
+
+You can now launch it. 
+To start a job, make sure you have previously launched DaVinci Resolve.
+
+You can open the web interface or exit the program from the notification area at the bottom left of the main screen.
