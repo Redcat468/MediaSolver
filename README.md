@@ -1,3 +1,5 @@
+![MediaSolver Banner and logo](https://i.imgur.com/JtXmbLL.png)
+
 MediaSolver is a suite of Python tools designed to automate media ingest and rendering in DaVinci Resolve. It provides a lightweight web interface, a command-line version, and a system tray application, all centered on a safety script that ensures the MediaSolver project is opened in Resolve.
 
 ## 💡 Base idea
@@ -14,10 +16,17 @@ Required :
  - Install DaVinciResolve Studio v.19.3.1 or higher (https://www.blackmagicdesign.com/fr/products/davinciresolve)
    
 ## 🚀 Usage
-Manually Start MediaSolver
-Manually Start DaVinci Resolve
-An icon appears in the notification area, then the web interface opens automatically at http://127.0.0.1:17209/.
+- Manually Start MediaSolver
+- Manually Start DaVinci Resolve
+- An icon appears in the notification area
+- The web interface opens automatically at http://127.0.0.1:17209/.
+  
 You can also acces this instance of MediaSolver on LAN via IP or Hostname to launch remote renderings on other hosts.
+
+![MediaSolver WebUI screenshot](https://i.imgur.com/6T0nUUE.png)
+
+
+
 
 ## 📁 Main Components
 
