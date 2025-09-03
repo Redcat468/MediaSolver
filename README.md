@@ -10,8 +10,14 @@ Exposes a Flask API to start processing, monitor progress, and query the Resolve
 Download and launch the latest release setup installer : https://github.com/Redcat468/MediaSolver/releases
 
 Required :
- - Python (https://www.python.org/downloads/)
- - DaVinciResolve Studio v.19.3.1 or higher (https://www.blackmagicdesign.com/fr/products/davinciresolve)
+ - Install Python on host (https://www.python.org/downloads/)
+ - Install DaVinciResolve Studio v.19.3.1 or higher (https://www.blackmagicdesign.com/fr/products/davinciresolve)
+   
+## 🚀 Usage
+Manually Start MediaSolver
+Manually Start DaVinci Resolve
+An icon appears in the notification area, then the web interface opens automatically at http://127.0.0.1:17209/.
+You can also acces this instance of MediaSolver on LAN via IP or Hostname to launch remote renderings on other hosts.
 
 ## 📁 Main Components
 
@@ -28,15 +34,6 @@ Can be executed whith the "Check Resolve Engine" button directly on webUI
 ## 3. System Tray Application (MediaSolverTray.py)
 Launches the Flask server in the background and displays an icon in the notification area.
 Icon menu: Open Web UI and Quit.
-
-
-
-## 🚀 Usage
-Web UI
-
-Start MediaSolver
-An icon appears in the notification area, then the web interface opens automatically at http://127.0.0.1:17209/.
-You can also acces this instance of MediaSolver on LAN via IP or Hostname to launch remote renderings on other hosts.
 
 
 ## 🔩 Command-Line Tool (MediaSolver-cli.py)
