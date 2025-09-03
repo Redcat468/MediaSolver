@@ -1,4 +1,3 @@
-README – MediaSolver
 MediaSolver is a suite of Python tools designed to automate media ingest and rendering in DaVinci Resolve. It provides a lightweight web interface, a command-line version, and a system tray application, all centered on a safety script that ensures the MediaSolver project is opened in Resolve.
 
 ## 💡 Base idea
